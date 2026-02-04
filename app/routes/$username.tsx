@@ -161,17 +161,90 @@ export default function Dashboard() {
     },
   ];
 
+  /**
+   * Get heatmap color based on distance from 100% target
+   * Uses same color scheme as progress bar but for background
+   * Bolder colors for better visibility
+   */
   const getHeatmapColor = (percentage: number) => {
-    // Universal red-yellow-green gradient for all nutrients
-    if (percentage === 0) return "bg-gray-100"; // No data
-    if (percentage < 70) return "bg-red-200";
-    if (percentage < 85) return "bg-orange-200";
-    if (percentage < 100) return "bg-yellow-200";
-    if (percentage < 115) return "bg-green-300";
-    return "bg-green-400";
+    // No data
+    if (percentage === 0) return "bg-gray-200";
+
+    // Calculate distance from 100%
+    const distance = Math.abs(percentage - 100);
+
+    // Green zone: 85-115% (0-15% distance from target)
+    if (distance <= 15) {
+      if (distance <= 5) return "bg-green-500"; // 95-105%: Perfect
+      return "bg-green-400"; // 85-95% or 105-115%: Good
+    }
+
+    // Yellow zone: 70-85% or 115-130% (15-30% distance)
+    if (distance <= 30) {
+      if (distance <= 20) return "bg-yellow-400"; // 80-100% or 100-120%
+      return "bg-yellow-500"; // 70-80% or 120-130%
+    }
+
+    // Orange zone: 50-70% or 130-150% (30-50% distance)
+    if (distance <= 50) {
+      if (distance <= 40) return "bg-orange-400"; // 60-70% or 130-140%
+      return "bg-orange-500"; // 50-60% or 140-150%
+    }
+
+    // Red zone: <50% or >150% (50%+ distance)
+    if (distance <= 70) return "bg-red-400"; // 30-50% or 150-170%
+    return "bg-red-500"; // <30% or >170%: Very far
   };
 
   const getPercentage = (value: number, goal: number) => (value / goal) * 100;
+
+  /**
+   * Get color based on distance from 100% target
+   * Returns gradient from red -> yellow -> green
+   * 100% = green (perfect), further from 100% = redder
+   */
+  const getPercentageColor = (percentage: number) => {
+    // Clamp to 0-200 range
+    const clamped = Math.max(0, Math.min(200, percentage));
+
+    // Calculate distance from 100% (0 = perfect, 100 = worst)
+    const distance = Math.abs(clamped - 100);
+
+    // Convert distance to 0-1 scale (0 = perfect, 1 = worst)
+    // Max distance is 100 (either 0% or 200%)
+    const distanceRatio = distance / 100;
+
+    // Color stops:
+    // 0-15% distance (85-115%) = green
+    // 15-30% distance (70-85% or 115-130%) = yellow
+    // 30%+ distance (<70% or >130%) = red
+
+    if (distance <= 15) {
+      // Green zone (85-115%)
+      return {
+        bg: "bg-green-500",
+        text: "text-green-700",
+      };
+    } else if (distance <= 30) {
+      // Yellow zone (70-85% or 115-130%)
+      return {
+        bg: "bg-yellow-500",
+        text: "text-yellow-700",
+      };
+    } else if (distance <= 50) {
+      // Orange zone (50-70% or 130-150%)
+      return {
+        bg: "bg-orange-500",
+        text: "text-orange-700",
+      };
+    } else {
+      // Red zone (<50% or >150%)
+      return {
+        bg: "bg-red-500",
+        text: "text-red-700",
+      };
+    }
+  };
 
   const formatDate = (dateStr: string, format: "short" | "long" = "short") => {
     const date = new Date(dateStr);
@@ -398,7 +471,7 @@ export default function Dashboard() {
                               >
                                 {/* Today indicator - big dot in center */}
                                 {isToday && (
-                                  <div className="absolute w-2 h-2 bg-indigo-600 rounded-full"></div>
+                                  <div className="absolute w-2 h-2 bg-gray-800 opacity-50 rounded-full"></div>
                                 )}
                                 {/* Missed indicator - "x" for zero */}
                                 {isMissed && !isToday && (
@@ -461,7 +534,10 @@ export default function Dashboard() {
                   const value = selectedDay.nutrients[nutrient.key];
                   const goal = profileData.goals[nutrient.key];
                   const percentage = getPercentage(value, goal);
-                  const isOnTrack = percentage >= 85 && percentage <= 115;
+                  const colors = getPercentageColor(percentage);
+
+                  // Calculate progress bar width (max 200% = full width)
+                  const progressWidth = Math.min(percentage, 200);
 
                   return (
                     <div key={nutrient.key} className="bg-gray-50 rounded-lg p-3 md:p-4">
@@ -473,14 +549,25 @@ export default function Dashboard() {
                         {value}
                         <span className="text-xs md:text-sm text-gray-500">/{goal}</span>
                       </div>
-                      <div
-                        className={`text-[10px] md:text-xs mt-1 px-1.5 md:px-2 py-0.5 md:py-1 rounded inline-block ${
-                          isOnTrack
-                            ? "bg-green-100 text-green-800"
-                            : "bg-orange-100 text-orange-800"
-                        }`}
-                      >
-                        {percentage.toFixed(0)}%
+
+                      {/* Progress Bar */}
+                      <div className="mt-2">
+                        <div className="mb-1">
+                          <span className={`text-xs md:text-sm font-semibold ${colors.text}`}>
+                            {percentage.toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="relative w-full bg-gray-200 h-2 md:h-2.5 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full ${colors.bg} transition-all duration-300`}
+                            style={{ width: `${(progressWidth / 200) * 100}%` }}
+                          />
+                          {/* 100% target marker - positioned at 50% (middle of 0-200% range) */}
+                          <div
+                            className="absolute top-0 bottom-0 w-0.5 bg-gray-800 opacity-40"
+                            style={{ left: '50%' }}
+                          />
+                        </div>
                       </div>
                     </div>
                   );
