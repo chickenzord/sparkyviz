@@ -69,6 +69,36 @@ interface UpstreamNutritionDay {
   iron?: number;
 }
 
+interface UpstreamGoals {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  water_goal_ml: number;
+  saturated_fat: number;
+  polyunsaturated_fat: number;
+  monounsaturated_fat: number;
+  trans_fat: number;
+  cholesterol: number;
+  sodium: number;
+  potassium: number;
+  dietary_fiber: number;
+  sugars: number;
+  vitamin_a: number;
+  vitamin_c: number;
+  calcium: number;
+  iron: number;
+  target_exercise_calories_burned: number;
+  target_exercise_duration_minutes: number;
+  protein_percentage: number | null;
+  carbs_percentage: number | null;
+  fat_percentage: number | null;
+  breakfast_percentage: number;
+  lunch_percentage: number;
+  dinner_percentage: number;
+  snacks_percentage: number;
+}
+
 export interface Profile {
   name: string;
   avatar: string;
@@ -107,15 +137,92 @@ export interface DailyData {
 }
 
 /**
+ * Fetch user goals for a specific date from SparkyFitness API
+ *
+ * @param username - The username to fetch goals for
+ * @param date - Date in YYYY-MM-DD format (defaults to today)
+ * @returns Goals data from the API
+ */
+export async function fetchGoals(username: string, date?: string): Promise<UpstreamGoals> {
+  const apiKey = getApiKey(username);
+
+  // Use today's date if not provided
+  const targetDate = date || new Date().toISOString().split('T')[0];
+
+  const response = await fetch(`${SPARKYFITNESS_API_URL}/goals/by-date/${targetDate}`, {
+    headers: {
+      'X-Api-Key': apiKey,
+      'Authorization': `Bearer ${apiKey}`,
+      'Host': WEB_HOST,
+      'Referer': SPARKYFITNESS_WEB_URL,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch goals for ${username} on ${targetDate}: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
+/**
+ * Calculate streak and total days tracked from nutrition history
+ *
+ * @param nutritionHistory - Array of daily nutrition data sorted by date (oldest first)
+ * @returns Object containing currentStreak and totalDays
+ */
+function calculateStreakAndTotalDays(nutritionHistory: DailyData[]): {
+  currentStreak: number;
+  totalDays: number;
+} {
+  // Count total days with any nutrition data (calories > 0)
+  const totalDays = nutritionHistory.filter(day => day.nutrients.calories > 0).length;
+
+  // Calculate current streak by counting backwards from today
+  let currentStreak = 0;
+  const today = new Date().toISOString().split('T')[0];
+
+  // Create a map for quick date lookup
+  const nutritionMap = new Map<string, DailyData>();
+  nutritionHistory.forEach(day => {
+    nutritionMap.set(day.date, day);
+  });
+
+  // Count backwards from today until we hit a day with no data
+  const currentDate = new Date();
+  while (true) {
+    const dateStr = currentDate.toISOString().split('T')[0];
+    const dayData = nutritionMap.get(dateStr);
+
+    // Stop if we have no data for this day or calories is 0
+    if (!dayData || dayData.nutrients.calories === 0) {
+      break;
+    }
+
+    currentStreak++;
+
+    // Move to previous day
+    currentDate.setDate(currentDate.getDate() - 1);
+
+    // Safety check: don't go back more than we have data for
+    if (currentStreak > nutritionHistory.length) {
+      break;
+    }
+  }
+
+  return { currentStreak, totalDays };
+}
+
+/**
  * Fetch user profile from SparkyFitness API
  *
  * Since each API key can only access its own data, we:
  * 1. Get the API key for the username
  * 2. Call GET /auth/profiles to get user profile and userId
- * 3. Transform response to our Profile format
- *
- * Note: The upstream API doesn't provide goals or streak data,
- * so we use hardcoded defaults for now.
+ * 3. Call GET /goals/by-date/{today} to get today's goals
+ * 4. Fetch nutrition history to calculate streak and total days
+ * 5. Transform response to our Profile format
  */
 export async function fetchProfile(username: string): Promise<Profile> {
   const apiKey = getApiKey(username);
@@ -141,19 +248,27 @@ export async function fetchProfile(username: string): Promise<Profile> {
     ? `${SPARKYFITNESS_WEB_URL}${data.avatar_url}`
     : data.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
 
+  // Fetch today's goals
+  // NOTE: Currently using today's goals for all dates. In the future, we should
+  // fetch goals for each individual date to calculate achieved percentages accurately.
+  const todayGoals = await fetchGoals(username);
+
+  // Fetch nutrition history to calculate streak and total days
+  // Using 90 days for streak calculation - enough to capture most streaks
+  const nutritionHistory = await fetchNutritionHistory(username, 90);
+  const { currentStreak, totalDays } = calculateStreakAndTotalDays(nutritionHistory);
+
   return {
     name: data.full_name || username,
     avatar: avatarUrl,
-    // TODO: Get actual goals from user preferences/settings endpoint
     goals: {
-      calories: 2200,
-      protein: 120,
-      carbs: 160,
-      fat: 73,
+      calories: todayGoals.calories,
+      protein: todayGoals.protein,
+      carbs: todayGoals.carbs,
+      fat: todayGoals.fat,
     },
-    // TODO: Calculate streak from nutrition history data
-    currentStreak: 0,
-    totalDays: 0,
+    currentStreak,
+    totalDays,
   };
 }
 

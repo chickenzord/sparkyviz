@@ -118,7 +118,7 @@ export default function Dashboard() {
         inline: "center",
       });
       if (todayIndex >= 0) {
-        setSelectedDay(heatmapData[todayIndex]);
+        setSelectedDay(trimmedData[todayIndex]);
       }
     }
   };
@@ -323,11 +323,11 @@ export default function Dashboard() {
 
         {/* Heatmap Section */}
         <div className="bg-white rounded-2xl shadow-lg p-3 md:p-6 mb-4 md:mb-6">
-          <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3 mb-4">
+          <div className="flex justify-between items-center mb-4">
             <h2 className="text-lg md:text-xl font-bold text-gray-800">90-Day Nutrition Heatmap</h2>
 
-            <div className="flex items-center gap-2 md:gap-4">
-              {/* Today Button */}
+            {/* Today Button - Hide if today is already selected */}
+            {selectedDay?.date !== today && (
               <button
                 onClick={scrollToToday}
                 className="px-3 py-1.5 md:px-4 md:py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors flex items-center gap-1 md:gap-2 text-xs md:text-sm font-medium"
@@ -335,32 +335,7 @@ export default function Dashboard() {
                 <Calendar className="w-3 h-3 md:w-4 md:h-4" />
                 <span className="hidden sm:inline">Jump to </span>Today
               </button>
-
-              {/* Legend - Hidden on mobile, show on md+ */}
-              <div className="hidden md:flex items-center gap-3 text-xs">
-                <span className="text-gray-600 font-medium">Goal %:</span>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-red-200 rounded"></div>
-                  <span>&lt;70%</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-orange-200 rounded"></div>
-                  <span>70-85%</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-yellow-200 rounded"></div>
-                  <span>85-100%</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-green-300 rounded"></div>
-                  <span>100-115%</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-3 h-3 bg-green-400 rounded"></div>
-                  <span>&gt;115%</span>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
 
           {/* Heatmap Table */}
@@ -469,12 +444,18 @@ export default function Dashboard() {
                                 `}
                                 title={`${day.date}\n${nutrient.label}: ${value}${nutrient.unit} (${percentage.toFixed(0)}%)`}
                               >
-                                {/* Today indicator - big dot in center */}
-                                {isToday && (
+                                {/* Selected indicator - show percentage */}
+                                {isSelected && (
+                                  <span className="text-[10px] font-bold text-white drop-shadow-sm">
+                                    {percentage.toFixed(0)}
+                                  </span>
+                                )}
+                                {/* Today indicator - big dot in center (only if not selected) */}
+                                {isToday && !isSelected && (
                                   <div className="absolute w-2 h-2 bg-gray-800 opacity-50 rounded-full"></div>
                                 )}
-                                {/* Missed indicator - "x" for zero */}
-                                {isMissed && !isToday && (
+                                {/* Missed indicator - "x" for zero (only if not selected and not today) */}
+                                {isMissed && !isSelected && !isToday && (
                                   <span className="text-gray-400 text-xs font-bold">×</span>
                                 )}
                               </div>
@@ -485,35 +466,6 @@ export default function Dashboard() {
                     </div>
                   );
                 })}
-              </div>
-            </div>
-          </div>
-
-          {/* Mobile Legend */}
-          <div className="md:hidden mt-4 pt-4 border-t border-gray-200">
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="text-gray-600 font-medium">Goal %:</span>
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1">
-                  <div className="w-2.5 h-2.5 bg-red-200 rounded"></div>
-                  <span>&lt;70</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-2.5 h-2.5 bg-orange-200 rounded"></div>
-                  <span>70-85</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-2.5 h-2.5 bg-yellow-200 rounded"></div>
-                  <span>85-100</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-2.5 h-2.5 bg-green-300 rounded"></div>
-                  <span>100-115</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <div className="w-2.5 h-2.5 bg-green-400 rounded"></div>
-                  <span>&gt;115</span>
-                </div>
               </div>
             </div>
           </div>
