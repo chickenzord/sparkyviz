@@ -13,6 +13,8 @@ import {
   Sun,
   Moon,
   Cookie,
+  Clock,
+  AlertTriangle,
 } from "lucide-react";
 
 export function meta({ params }: Route.MetaArgs) {
@@ -163,87 +165,95 @@ export default function Dashboard() {
 
   /**
    * Get heatmap color based on distance from 100% target
-   * Uses same color scheme as progress bar but for background
-   * Bolder colors for better visibility
+   * Returns smooth RGBA gradient from red (far from target) to green (at target)
+   * More lenient when over 100% (eating more is less concerning than eating less)
    */
-  const getHeatmapColor = (percentage: number) => {
+  const getHeatmapColor = (percentage: number): string => {
     // No data
-    if (percentage === 0) return "bg-gray-200";
+    if (percentage === 0) return "rgba(229, 231, 235, 1)"; // gray-200
 
-    // Calculate distance from 100%
-    const distance = Math.abs(percentage - 100);
-
-    // Green zone: 85-115% (0-15% distance from target)
-    if (distance <= 15) {
-      if (distance <= 5) return "bg-green-500"; // 95-105%: Perfect
-      return "bg-green-400"; // 85-95% or 105-115%: Good
+    // Calculate distance from 100%, but weight it differently for over vs under
+    // Under 100%: Use actual distance (stricter)
+    // Over 100%: Scale distance down (more lenient)
+    let adjustedDistance: number;
+    if (percentage < 100) {
+      // Below target: use full distance (stricter)
+      adjustedDistance = 100 - percentage;
+    } else {
+      // Above target: scale distance by 0.5 (more lenient)
+      // e.g., 130% feels like 115% in terms of color severity
+      adjustedDistance = (percentage - 100) * 0.5;
     }
 
-    // Yellow zone: 70-85% or 115-130% (15-30% distance)
-    if (distance <= 30) {
-      if (distance <= 20) return "bg-yellow-400"; // 80-100% or 100-120%
-      return "bg-yellow-500"; // 70-80% or 120-130%
-    }
+    // Color zones based on adjusted distance from 100%:
+    // 0-15 adjusted distance: Green
+    // 15-30 adjusted distance: Yellow
+    // 30-50 adjusted distance: Orange
+    // 50+ adjusted distance: Red
 
-    // Orange zone: 50-70% or 130-150% (30-50% distance)
-    if (distance <= 50) {
-      if (distance <= 40) return "bg-orange-400"; // 60-70% or 130-140%
-      return "bg-orange-500"; // 50-60% or 140-150%
+    if (adjustedDistance <= 15) {
+      // Green zone - darker green at exactly 100%, lighter as we move away
+      const intensity = 1 - (adjustedDistance / 15) * 0.3; // 1.0 to 0.7
+      return `rgba(34, 197, 94, ${intensity})`; // green-500 base
+    } else if (adjustedDistance <= 30) {
+      // Yellow zone - transition from green to yellow
+      const t = (adjustedDistance - 15) / 15; // 0 to 1
+      const r = Math.round(34 + (234 - 34) * t);
+      const g = Math.round(197 + (179 - 197) * t);
+      const b = Math.round(94 + (0 - 94) * t);
+      return `rgba(${r}, ${g}, ${b}, ${0.9 - t * 0.1})`; // 0.9 to 0.8 opacity
+    } else if (adjustedDistance <= 50) {
+      // Orange zone - transition from yellow to orange
+      const t = (adjustedDistance - 30) / 20; // 0 to 1
+      const r = Math.round(234 + (249 - 234) * t);
+      const g = Math.round(179 + (115 - 179) * t);
+      const b = Math.round(0 + (0 - 0) * t);
+      return `rgba(${r}, ${g}, ${b}, ${0.85 - t * 0.05})`; // 0.85 to 0.8 opacity
+    } else {
+      // Red zone - transition from orange to red
+      const t = Math.min((adjustedDistance - 50) / 50, 1); // 0 to 1
+      const r = 239; // red-500
+      const g = Math.round(115 - 115 * t * 0.3);
+      const b = Math.round(0 + 68 * t * 0.3);
+      return `rgba(${r}, ${g}, ${b}, ${0.85 + t * 0.15})`; // 0.85 to 1.0 opacity
     }
-
-    // Red zone: <50% or >150% (50%+ distance)
-    if (distance <= 70) return "bg-red-400"; // 30-50% or 150-170%
-    return "bg-red-500"; // <30% or >170%: Very far
   };
 
   const getPercentage = (value: number, goal: number) => (value / goal) * 100;
 
   /**
    * Get color based on distance from 100% target
-   * Returns gradient from red -> yellow -> green
-   * 100% = green (perfect), further from 100% = redder
+   * Returns same RGBA gradient as heatmap for consistency
+   * More lenient when over 100% (eating more is less concerning than eating less)
    */
   const getPercentageColor = (percentage: number) => {
-    // Clamp to 0-200 range
-    const clamped = Math.max(0, Math.min(200, percentage));
+    // Use the same color logic as heatmap
+    const bgColor = getHeatmapColor(percentage);
 
-    // Calculate distance from 100% (0 = perfect, 100 = worst)
-    const distance = Math.abs(clamped - 100);
-
-    // Convert distance to 0-1 scale (0 = perfect, 1 = worst)
-    // Max distance is 100 (either 0% or 200%)
-    const distanceRatio = distance / 100;
-
-    // Color stops:
-    // 0-15% distance (85-115%) = green
-    // 15-30% distance (70-85% or 115-130%) = yellow
-    // 30%+ distance (<70% or >130%) = red
-
-    if (distance <= 15) {
-      // Green zone (85-115%)
-      return {
-        bg: "bg-green-500",
-        text: "text-green-700",
-      };
-    } else if (distance <= 30) {
-      // Yellow zone (70-85% or 115-130%)
-      return {
-        bg: "bg-yellow-500",
-        text: "text-yellow-700",
-      };
-    } else if (distance <= 50) {
-      // Orange zone (50-70% or 130-150%)
-      return {
-        bg: "bg-orange-500",
-        text: "text-orange-700",
-      };
+    // Calculate distance for text color determination
+    let adjustedDistance: number;
+    if (percentage < 100) {
+      adjustedDistance = 100 - percentage;
     } else {
-      // Red zone (<50% or >150%)
-      return {
-        bg: "bg-red-500",
-        text: "text-red-700",
-      };
+      adjustedDistance = (percentage - 100) * 0.5;
     }
+
+    // Determine text color based on severity
+    let textColor: string;
+    if (adjustedDistance <= 15) {
+      textColor = "rgb(21, 128, 61)"; // green-700
+    } else if (adjustedDistance <= 30) {
+      textColor = "rgb(161, 98, 7)"; // yellow-700
+    } else if (adjustedDistance <= 50) {
+      textColor = "rgb(194, 65, 12)"; // orange-700
+    } else {
+      textColor = "rgb(185, 28, 28)"; // red-700
+    }
+
+    return {
+      bg: bgColor,
+      text: textColor,
+    };
   };
 
   const formatDate = (dateStr: string, format: "short" | "long" = "short") => {
@@ -257,6 +267,19 @@ export default function Dashboard() {
       month: "long",
       day: "numeric",
     });
+  };
+
+  const getRelativeDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const todayDate = new Date(today);
+    const diffTime = todayDate.getTime() - date.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "Yesterday";
+    if (diffDays < 60) return `${diffDays} days ago`;
+    if (diffDays < 90) return "~2 months ago";
+    return `~${Math.floor(diffDays / 30)} months ago`;
   };
 
   // Group days by month for headers
@@ -438,10 +461,10 @@ export default function Dashboard() {
                                 onClick={() => setSelectedDay(day)}
                                 className={`
                                   relative w-7 h-7 md:w-8 md:h-8 cursor-pointer transition-all active:scale-95
-                                  ${getHeatmapColor(percentage)}
                                   ${isSelected ? "shadow-[inset_0_0_0_2px_rgb(79,70,229)]" : ""}
                                   flex items-center justify-center flex-shrink-0
                                 `}
+                                style={{ backgroundColor: getHeatmapColor(percentage) }}
                                 title={`${day.date}\n${nutrient.label}: ${value}${nutrient.unit} (${percentage.toFixed(0)}%)`}
                               >
                                 {/* Selected indicator - show percentage */}
@@ -475,9 +498,26 @@ export default function Dashboard() {
         {selectedDay && (
           <div className="bg-white rounded-2xl shadow-lg p-3 md:p-6 animate-fade-in">
             <div className="mb-4 md:mb-6">
-              <h2 className="text-lg md:text-xl font-bold text-gray-800">
-                {formatDate(selectedDay.date, "long")}
-              </h2>
+              <div className="flex items-center gap-2 mb-2">
+                <h2 className="text-lg md:text-xl font-bold text-gray-800">
+                  {formatDate(selectedDay.date, "long")}
+                </h2>
+                {selectedDay.date === today ? (
+                  <div className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-md text-xs font-medium">
+                    <Clock className="w-3 h-3" />
+                    <span>Today</span>
+                  </div>
+                ) : (
+                  <div className="px-2 py-1 bg-gray-100 text-gray-600 rounded-md text-xs font-medium">
+                    {getRelativeDate(selectedDay.date)}
+                  </div>
+                )}
+              </div>
+              {selectedDay.date === today && (
+                <p className="text-xs md:text-sm text-gray-500 italic mb-2">
+                  Data may be incomplete as the day is still in progress
+                </p>
+              )}
 
               {/* Daily Summary Cards */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 mt-3 md:mt-4">
@@ -504,15 +544,24 @@ export default function Dashboard() {
 
                       {/* Progress Bar */}
                       <div className="mt-2">
-                        <div className="mb-1">
-                          <span className={`text-xs md:text-sm font-semibold ${colors.text}`}>
+                        <div className="mb-1 flex items-center gap-1">
+                          <span
+                            className="text-xs md:text-sm font-semibold"
+                            style={{ color: colors.text }}
+                          >
                             {percentage.toFixed(0)}%
                           </span>
+                          {percentage > 200 && (
+                            <AlertTriangle className="w-3 h-3 md:w-4 md:h-4 text-red-600" />
+                          )}
                         </div>
                         <div className="relative w-full bg-gray-200 h-2 md:h-2.5 rounded-full overflow-hidden">
                           <div
-                            className={`h-full ${colors.bg} transition-all duration-300`}
-                            style={{ width: `${(progressWidth / 200) * 100}%` }}
+                            className={`h-full transition-all duration-300 ${selectedDay.date === today ? 'progress-in-progress' : ''}`}
+                            style={{
+                              width: `${(progressWidth / 200) * 100}%`,
+                              backgroundColor: colors.bg
+                            }}
                           />
                           {/* 100% target marker - positioned at 50% (middle of 0-200% range) */}
                           <div
