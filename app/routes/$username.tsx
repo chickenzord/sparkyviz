@@ -300,22 +300,20 @@ export default function Dashboard() {
 
                 {/* Month labels */}
                 <div className="flex gap-0.5">
-                  {months.map((month, idx) => {
-                    // Calculate width: (days * cellWidth) + (gaps * gapWidth)
-                    // cellWidth = 28px (w-7), gapWidth = 2px (gap-0.5)
-                    const totalWidth = month.days.length * 28 + (month.days.length - 1) * 2;
-                    return (
-                      <div
-                        key={idx}
-                        className="text-center border-b-2 border-gray-200 flex-shrink-0"
-                        style={{ width: `${totalWidth}px` }}
-                      >
-                        <div className="text-xs md:text-sm font-semibold text-gray-700 mb-1">
+                  {months.map((month, idx) => (
+                    <div key={idx} className="flex-shrink-0">
+                      <div className="text-center border-b-2 border-gray-200 pb-1">
+                        <div className="text-xs md:text-sm font-semibold text-gray-700">
                           {month.label}
                         </div>
                       </div>
-                    );
-                  })}
+                      <div className="flex gap-0.5">
+                        {month.days.map((day) => (
+                          <div key={day.date} className="w-7 md:w-8 h-0 flex-shrink-0" />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
@@ -332,7 +330,7 @@ export default function Dashboard() {
                     return (
                       <div
                         key={day.date}
-                        className={`w-7 text-center flex-shrink-0 ${isToday ? "font-bold text-green-600" : "text-gray-500"}`}
+                        className={`w-7 md:w-8 text-center flex-shrink-0 ${isToday ? "font-bold text-green-600" : "text-gray-500"}`}
                       >
                         <div className="text-[10px] leading-tight">
                           {date.toLocaleDateString("en-US", { weekday: "narrow" })}
@@ -391,7 +389,7 @@ export default function Dashboard() {
                                 }
                                 onClick={() => setSelectedDay(day)}
                                 className={`
-                                  relative w-7 h-7 md:w-8 md:h-8 rounded cursor-pointer transition-all active:scale-95 md:hover:scale-105
+                                  relative w-7 h-7 md:w-8 md:h-8 cursor-pointer transition-all active:scale-95
                                   ${getHeatmapColor(percentage)}
                                   ${isSelected ? "shadow-[inset_0_0_0_2px_rgb(79,70,229)]" : ""}
                                   flex items-center justify-center flex-shrink-0

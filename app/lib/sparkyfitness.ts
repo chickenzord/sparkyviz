@@ -6,7 +6,68 @@
  */
 
 const SPARKYFITNESS_API_URL = process.env.SPARKYFITNESS_API_URL || "https://api.sparkyfitness.com";
-const SPARKYFITNESS_API_KEY = process.env.SPARKYFITNESS_API_KEY || "";
+const SPARKYFITNESS_WEB_URL = process.env.SPARKYFITNESS_WEB_URL || "https://fit.mdgrd.net";
+
+// Extract host from web URL for headers
+const WEB_HOST = new URL(SPARKYFITNESS_WEB_URL).host;
+
+// Parse API keys mapping from environment variable
+// Format: "username1:apikey1,username2:apikey2"
+const API_KEYS_MAP = new Map<string, string>();
+const apiKeysEnv = process.env.SPARKYFITNESS_API_KEYS || "";
+if (apiKeysEnv) {
+  apiKeysEnv.split(',').forEach(entry => {
+    const [username, apiKey] = entry.trim().split(':');
+    if (username && apiKey) {
+      API_KEYS_MAP.set(username, apiKey);
+    }
+  });
+}
+
+/**
+ * Get API key for a specific username
+ */
+function getApiKey(username: string): string {
+  const apiKey = API_KEYS_MAP.get(username);
+  if (!apiKey) {
+    throw new Error(`No API key configured for username: ${username}`);
+  }
+  return apiKey;
+}
+
+/**
+ * Upstream API response types
+ */
+interface UpstreamProfile {
+  id: string;
+  full_name: string;
+  phone_number: string;
+  date_of_birth: string;
+  bio: string;
+  avatar_url: string;
+  gender: string;
+}
+
+interface UpstreamNutritionDay {
+  date: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  saturated_fat?: number;
+  polyunsaturated_fat?: number;
+  monounsaturated_fat?: number;
+  trans_fat?: number;
+  cholesterol?: number;
+  sodium?: number;
+  potassium?: number;
+  dietary_fiber?: number;
+  sugars?: number;
+  vitamin_a?: number;
+  vitamin_c?: number;
+  calcium?: number;
+  iron?: number;
+}
 
 export interface Profile {
   name: string;
@@ -47,137 +108,160 @@ export interface DailyData {
 
 /**
  * Fetch user profile from SparkyFitness API
+ *
+ * Since each API key can only access its own data, we:
+ * 1. Get the API key for the username
+ * 2. Call GET /auth/profiles to get user profile and userId
+ * 3. Transform response to our Profile format
+ *
+ * Note: The upstream API doesn't provide goals or streak data,
+ * so we use hardcoded defaults for now.
  */
 export async function fetchProfile(username: string): Promise<Profile> {
-  // TODO: Replace with actual API call to SparkyFitness
-  // const response = await fetch(`${SPARKYFITNESS_API_URL}/users/${username}/profile`, {
-  //   headers: { Authorization: `Bearer ${SPARKYFITNESS_API_KEY}` }
-  // });
-  // const data = await response.json();
-  // return transformProfileResponse(data);
+  const apiKey = getApiKey(username);
 
-  // Mock data for now
+  const response = await fetch(`${SPARKYFITNESS_API_URL}/auth/profiles`, {
+    headers: {
+      'X-Api-Key': apiKey,
+      'Authorization': `Bearer ${apiKey}`,
+      'Host': WEB_HOST,
+      'Referer': SPARKYFITNESS_WEB_URL,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch profile for ${username}: ${response.statusText}`);
+  }
+
+  const data: UpstreamProfile = await response.json();
+
+  // Construct full avatar URL - avatars are served from the web URL
+  const avatarUrl = data.avatar_url?.startsWith('/')
+    ? `${SPARKYFITNESS_WEB_URL}${data.avatar_url}`
+    : data.avatar_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
+
   return {
-    name: username.charAt(0).toUpperCase() + username.slice(1),
-    avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`,
+    name: data.full_name || username,
+    avatar: avatarUrl,
+    // TODO: Get actual goals from user preferences/settings endpoint
     goals: {
       calories: 2200,
-      protein: 165,
-      carbs: 248,
+      protein: 120,
+      carbs: 160,
       fat: 73,
     },
-    currentStreak: 15,
-    totalDays: 90,
+    // TODO: Calculate streak from nutrition history data
+    currentStreak: 0,
+    totalDays: 0,
   };
 }
 
 /**
  * Fetch nutrition history from SparkyFitness API
+ *
+ * Process:
+ * 1. Get API key for username
+ * 2. Fetch profile to get userId
+ * 3. Calculate date range (last N days)
+ * 4. Call GET /reports/mini-nutrition-trends
+ * 5. Transform response to DailyData format
+ *
+ * Note: The upstream API only provides daily nutrition totals, not meal breakdown.
+ * Meal data will be empty arrays for now.
  */
 export async function fetchNutritionHistory(
   username: string,
   days: number = 90
 ): Promise<DailyData[]> {
-  // TODO: Replace with actual API call to SparkyFitness
-  // const response = await fetch(
-  //   `${SPARKYFITNESS_API_URL}/users/${username}/nutrition/history?days=${days}`,
-  //   { headers: { Authorization: `Bearer ${SPARKYFITNESS_API_KEY}` } }
-  // );
-  // const data = await response.json();
-  // return transformHistoryResponse(data);
+  const apiKey = getApiKey(username);
 
-  // Mock data: Last 5 weeks (35 days) with up to 3 random blank days
-  const totalDays = 35;
-
-  // Pick 0-3 random days to be blank
-  const blankDayCount = Math.floor(Math.random() * 4); // 0, 1, 2, or 3
-  const blankDayIndices = new Set<number>();
-  while (blankDayIndices.size < blankDayCount) {
-    blankDayIndices.add(Math.floor(Math.random() * totalDays));
-  }
-
-  const data = Array.from({ length: totalDays }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (totalDays - 1 - i));
-
-    const isBlankDay = blankDayIndices.has(i);
-
-    return {
-      date: date.toISOString().split("T")[0],
-      nutrients: isBlankDay
-        ? { calories: 0, protein: 0, carbs: 0, fat: 0 }
-        : {
-            calories: Math.floor(Math.random() * 600) + 1800, // 1800-2400
-            protein: Math.floor(Math.random() * 50) + 140,    // 140-190g
-            carbs: Math.floor(Math.random() * 80) + 210,      // 210-290g
-            fat: Math.floor(Math.random() * 25) + 60,         // 60-85g
-          },
-      meals: isBlankDay
-        ? { breakfast: [], lunch: [], dinner: [], snack: [] }
-        : {
-            breakfast: [
-              {
-                name: "Nasi Goreng",
-                calories: 450,
-                protein: 15,
-                carbs: 65,
-                fat: 12,
-              },
-            ],
-            lunch: [
-              {
-                name: "Ayam Bakar",
-                calories: 380,
-                protein: 45,
-                carbs: 5,
-                fat: 18,
-              },
-              { name: "Sayur Asem", calories: 80, protein: 3, carbs: 12, fat: 2 },
-            ],
-            dinner: [
-              {
-                name: "Gado-gado",
-                calories: 320,
-                protein: 14,
-                carbs: 35,
-                fat: 15,
-              },
-              {
-                name: "Tempe Mendoan",
-                calories: 200,
-                protein: 12,
-                carbs: 18,
-                fat: 9,
-              },
-            ],
-            snack: [
-              {
-                name: "Pisang Goreng",
-                calories: 150,
-                protein: 2,
-                carbs: 28,
-                fat: 4,
-              },
-            ],
-          },
-    };
+  // Step 1: Get userId from profile
+  const profileResponse = await fetch(`${SPARKYFITNESS_API_URL}/auth/profiles`, {
+    headers: {
+      'X-Api-Key': apiKey,
+      'Authorization': `Bearer ${apiKey}`,
+      'Host': WEB_HOST,
+      'Referer': SPARKYFITNESS_WEB_URL,
+      'Content-Type': 'application/json'
+    }
   });
 
-  // Pad with blank days at the beginning to reach requested 'days' count
-  // This simulates a user who started tracking recently
-  const paddingDays = days - totalDays;
-  if (paddingDays > 0) {
-    const padding = Array.from({ length: paddingDays }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - (days - 1 - i));
-      return {
-        date: date.toISOString().split("T")[0],
-        nutrients: { calories: 0, protein: 0, carbs: 0, fat: 0 },
-        meals: { breakfast: [], lunch: [], dinner: [], snack: [] },
-      };
-    });
-    return [...padding, ...data];
+  if (!profileResponse.ok) {
+    throw new Error(`Failed to fetch profile for ${username}: ${profileResponse.statusText}`);
   }
 
-  return data;
+  const profileData: UpstreamProfile = await profileResponse.json();
+  const userId = profileData.id;
+
+  if (!userId) {
+    throw new Error(`No userId found in profile for ${username}`);
+  }
+
+  // Step 2: Calculate date range
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() - days + 1);
+
+  const endDateStr = endDate.toISOString().split('T')[0];
+  const startDateStr = startDate.toISOString().split('T')[0];
+
+  // Step 3: Fetch nutrition trends
+  const nutritionUrl = `${SPARKYFITNESS_API_URL}/reports/mini-nutrition-trends?userId=${userId}&startDate=${startDateStr}&endDate=${endDateStr}`;
+  const nutritionResponse = await fetch(nutritionUrl, {
+    headers: {
+      'X-Api-Key': apiKey,
+      'Authorization': `Bearer ${apiKey}`,
+      'Host': WEB_HOST,
+      'Referer': SPARKYFITNESS_WEB_URL,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!nutritionResponse.ok) {
+    throw new Error(`Failed to fetch nutrition history for ${username}: ${nutritionResponse.statusText}`);
+  }
+
+  const nutritionData: UpstreamNutritionDay[] = await nutritionResponse.json();
+
+  // Step 4: Transform to DailyData format
+  // Create a map of date -> nutrition data for quick lookup
+  const nutritionMap = new Map<string, UpstreamNutritionDay>();
+  nutritionData.forEach(day => {
+    nutritionMap.set(day.date, day);
+  });
+
+  // Generate array for all requested days
+  const result: DailyData[] = [];
+  for (let i = 0; i < days; i++) {
+    const currentDate = new Date(startDate);
+    currentDate.setDate(currentDate.getDate() + i);
+    const dateStr = currentDate.toISOString().split('T')[0];
+
+    const dayData = nutritionMap.get(dateStr);
+
+    result.push({
+      date: dateStr,
+      nutrients: dayData ? {
+        calories: Math.round(dayData.calories * 10) / 10,
+        protein: Math.round(dayData.protein * 10) / 10,
+        carbs: Math.round(dayData.carbs * 10) / 10,
+        fat: Math.round(dayData.fat * 10) / 10,
+      } : {
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+      },
+      // TODO: Meal breakdown requires additional API endpoint
+      meals: {
+        breakfast: [],
+        lunch: [],
+        dinner: [],
+        snack: [],
+      },
+    });
+  }
+
+  return result;
 }
