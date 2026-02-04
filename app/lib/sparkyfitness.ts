@@ -12,14 +12,17 @@ const SPARKYFITNESS_WEB_URL = process.env.SPARKYFITNESS_WEB_URL || "https://fit.
 const WEB_HOST = new URL(SPARKYFITNESS_WEB_URL).host;
 
 // Parse API keys mapping from environment variable
-// Format: "username1:apikey1,username2:apikey2"
-const API_KEYS_MAP = new Map<string, string>();
+// Format: "username1:password1:apikey1,username2:password2:apikey2"
+const API_KEYS_MAP = new Map<string, { password: string; apiKey: string }>();
 const apiKeysEnv = process.env.SPARKYFITNESS_API_KEYS || "";
 if (apiKeysEnv) {
   apiKeysEnv.split(',').forEach(entry => {
-    const [username, apiKey] = entry.trim().split(':');
-    if (username && apiKey) {
-      API_KEYS_MAP.set(username, apiKey);
+    const parts = entry.trim().split(':');
+    if (parts.length === 3) {
+      const [username, password, apiKey] = parts;
+      if (username && password && apiKey) {
+        API_KEYS_MAP.set(username, { password, apiKey });
+      }
     }
   });
 }
@@ -28,11 +31,30 @@ if (apiKeysEnv) {
  * Get API key for a specific username
  */
 function getApiKey(username: string): string {
-  const apiKey = API_KEYS_MAP.get(username);
-  if (!apiKey) {
+  const entry = API_KEYS_MAP.get(username);
+  if (!entry) {
     throw new Error(`No API key configured for username: ${username}`);
   }
-  return apiKey;
+  return entry.apiKey;
+}
+
+/**
+ * Validate password for a specific username
+ */
+export function validatePassword(username: string, password: string): boolean {
+  const entry = API_KEYS_MAP.get(username);
+  if (!entry) {
+    return false;
+  }
+  return entry.password === password;
+}
+
+/**
+ * Get the first registered username
+ */
+export function getFirstUsername(): string | null {
+  const firstEntry = Array.from(API_KEYS_MAP.keys())[0];
+  return firstEntry || null;
 }
 
 /**
@@ -99,6 +121,36 @@ interface UpstreamGoals {
   snacks_percentage: number;
 }
 
+interface UpstreamFoodEntry {
+  id: string;
+  food_id: string;
+  meal_type: "breakfast" | "lunch" | "dinner" | "snack";
+  quantity: number;
+  unit: string;
+  entry_date: string;
+  food_name: string;
+  brand_name: string;
+  serving_size: number;
+  serving_unit: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  saturated_fat?: number;
+  polyunsaturated_fat?: number;
+  monounsaturated_fat?: number;
+  trans_fat?: number;
+  cholesterol?: number;
+  sodium?: number;
+  potassium?: number;
+  dietary_fiber?: number;
+  sugars?: number;
+  vitamin_a?: number;
+  vitamin_c?: number;
+  calcium?: number;
+  iron?: number;
+}
+
 export interface Profile {
   name: string;
   avatar: string;
@@ -114,6 +166,9 @@ export interface Profile {
 
 export interface FoodItem {
   name: string;
+  brand?: string;
+  quantity: number;
+  unit: string;
   calories: number;
   protein: number;
   carbs: number;
@@ -273,17 +328,90 @@ export async function fetchProfile(username: string): Promise<Profile> {
 }
 
 /**
+ * Fetch food entries for a specific date from SparkyFitness API
+ *
+ * @param username - The username to fetch food entries for
+ * @param date - Date in YYYY-MM-DD format
+ * @returns Object with meals grouped by meal type
+ */
+async function fetchFoodEntriesForDate(
+  username: string,
+  date: string
+): Promise<{
+  breakfast: FoodItem[];
+  lunch: FoodItem[];
+  dinner: FoodItem[];
+  snack: FoodItem[];
+}> {
+  const apiKey = getApiKey(username);
+
+  const response = await fetch(`${SPARKYFITNESS_API_URL}/food-entries/by-date/${date}`, {
+    headers: {
+      'X-Api-Key': apiKey,
+      'Authorization': `Bearer ${apiKey}`,
+      'Host': WEB_HOST,
+      'Referer': SPARKYFITNESS_WEB_URL,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    // If no food entries found for this date, return empty meals
+    if (response.status === 404) {
+      return { breakfast: [], lunch: [], dinner: [], snack: [] };
+    }
+    throw new Error(`Failed to fetch food entries for ${username} on ${date}: ${response.statusText}`);
+  }
+
+  const entries: UpstreamFoodEntry[] = await response.json();
+
+  // Transform and group by meal type
+  const meals: {
+    breakfast: FoodItem[];
+    lunch: FoodItem[];
+    dinner: FoodItem[];
+    snack: FoodItem[];
+  } = {
+    breakfast: [],
+    lunch: [],
+    dinner: [],
+    snack: [],
+  };
+
+  entries.forEach(entry => {
+    // Calculate actual nutritional values based on quantity consumed
+    // The API returns values per serving_size, we need to scale by quantity
+    const ratio = entry.quantity / entry.serving_size;
+
+    const foodItem: FoodItem = {
+      name: entry.food_name,
+      brand: entry.brand_name || undefined,
+      quantity: entry.quantity,
+      unit: entry.unit,
+      calories: Math.round(entry.calories * ratio * 10) / 10,
+      protein: Math.round(entry.protein * ratio * 10) / 10,
+      carbs: Math.round(entry.carbs * ratio * 10) / 10,
+      fat: Math.round(entry.fat * ratio * 10) / 10,
+    };
+
+    meals[entry.meal_type].push(foodItem);
+  });
+
+  return meals;
+}
+
+/**
  * Fetch nutrition history from SparkyFitness API
  *
  * Process:
  * 1. Get API key for username
  * 2. Fetch profile to get userId
  * 3. Calculate date range (last N days)
- * 4. Call GET /reports/mini-nutrition-trends
- * 5. Transform response to DailyData format
+ * 4. Call GET /reports/mini-nutrition-trends for daily totals
+ * 5. Fetch food entries for each day (GET /food-entries/by-date/{date})
+ * 6. Transform and combine data into DailyData format
  *
- * Note: The upstream API only provides daily nutrition totals, not meal breakdown.
- * Meal data will be empty arrays for now.
+ * Note: Food entries are fetched in parallel for all days to optimize performance.
  */
 export async function fetchNutritionHistory(
   username: string,
@@ -346,14 +474,47 @@ export async function fetchNutritionHistory(
     nutritionMap.set(day.date, day);
   });
 
-  // Generate array for all requested days
-  const result: DailyData[] = [];
+  // Step 5: Fetch food entries for all days in parallel
+  const datePromises: Promise<{ date: string; meals: typeof result[0]['meals'] }>[] = [];
+  const dateStrings: string[] = [];
+
   for (let i = 0; i < days; i++) {
     const currentDate = new Date(startDate);
     currentDate.setDate(currentDate.getDate() + i);
     const dateStr = currentDate.toISOString().split('T')[0];
+    dateStrings.push(dateStr);
 
+    // Fetch food entries for this date
+    datePromises.push(
+      fetchFoodEntriesForDate(username, dateStr)
+        .then(meals => ({ date: dateStr, meals }))
+        .catch(() => ({
+          date: dateStr,
+          meals: { breakfast: [], lunch: [], dinner: [], snack: [] }
+        }))
+    );
+  }
+
+  // Wait for all food entry requests to complete
+  const foodEntriesResults = await Promise.all(datePromises);
+
+  // Create a map of date -> meals for quick lookup
+  const mealsMap = new Map<string, typeof result[0]['meals']>();
+  foodEntriesResults.forEach(({ date, meals }) => {
+    mealsMap.set(date, meals);
+  });
+
+  // Generate array for all requested days
+  const result: DailyData[] = [];
+  for (let i = 0; i < days; i++) {
+    const dateStr = dateStrings[i];
     const dayData = nutritionMap.get(dateStr);
+    const meals = mealsMap.get(dateStr) || {
+      breakfast: [],
+      lunch: [],
+      dinner: [],
+      snack: [],
+    };
 
     result.push({
       date: dateStr,
@@ -368,13 +529,7 @@ export async function fetchNutritionHistory(
         carbs: 0,
         fat: 0,
       },
-      // TODO: Meal breakdown requires additional API endpoint
-      meals: {
-        breakfast: [],
-        lunch: [],
-        dinner: [],
-        snack: [],
-      },
+      meals,
     });
   }
 

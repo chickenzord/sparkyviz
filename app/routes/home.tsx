@@ -1,6 +1,7 @@
 import type { Route } from "./+types/home";
-import { Link } from "react-router";
+import { Link, useLoaderData } from "react-router";
 import { Target, TrendingUp, Calendar } from "lucide-react";
+import { getFirstUsername } from "../lib/sparkyfitness";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -12,7 +13,13 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
+export async function loader() {
+  const firstUsername = getFirstUsername();
+  return { firstUsername };
+}
+
 export default function Home() {
+  const { firstUsername } = useLoaderData<typeof loader>();
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       <div className="max-w-4xl mx-auto px-6 py-16">
@@ -65,12 +72,31 @@ export default function Home() {
           <p className="text-gray-600 mb-6">
             View a sample dashboard to see how it works
           </p>
-          <Link
-            to="/demo"
-            className="inline-block px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            View Demo Dashboard
-          </Link>
+          {firstUsername ? (
+            <Link
+              to={`/${firstUsername}`}
+              className="inline-block px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              @{firstUsername}
+            </Link>
+          ) : (
+            <p className="text-gray-500 text-sm">No users configured</p>
+          )}
+        </div>
+
+        {/* Attribution Footer */}
+        <div className="mt-8 text-center">
+          <p className="text-sm text-gray-500">
+            Built by{" "}
+            <a
+              href="https://akhy.dev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 hover:text-indigo-700 font-medium underline"
+            >
+              akhy
+            </a>
+          </p>
         </div>
       </div>
     </div>

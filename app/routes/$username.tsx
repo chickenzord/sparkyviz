@@ -1,4 +1,4 @@
-import { useLoaderData } from "react-router";
+import { useLoaderData, useNavigate } from "react-router";
 import { useState, useRef, useEffect } from "react";
 import type { Route } from "./+types/$username";
 import {
@@ -15,6 +15,11 @@ import {
   Cookie,
   Clock,
   AlertTriangle,
+  UtensilsCrossed,
+  Soup,
+  Sunrise,
+  Lock,
+  XCircle,
 } from "lucide-react";
 
 export function meta({ params }: Route.MetaArgs) {
@@ -30,6 +35,31 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   // Use the request URL to build API URLs (works in both dev and production)
   const url = new URL(request.url);
   const baseUrl = `${url.protocol}//${url.host}`;
+
+  // Get password from cookie only (not from query params)
+  const cookieHeader = request.headers.get("Cookie");
+  const passwordCookie = cookieHeader?.split(';').find(c => c.trim().startsWith(`auth-${username}=`))?.split('=')[1];
+
+  // Lazy import to avoid issues with server-only code
+  const { validatePassword } = await import("../lib/sparkyfitness");
+
+  // Check if password is valid
+  const isAuthenticated = passwordCookie && validatePassword(username, passwordCookie);
+
+  // Check if there was an authentication failure
+  const authFailed = url.searchParams.get("auth_failed") === "1";
+
+  // If not authenticated, return early with auth required flag
+  if (!isAuthenticated) {
+    return {
+      authenticated: false,
+      username,
+      profile: null,
+      history: null,
+      dateParam: null,
+      authFailed
+    };
+  }
 
   // Get optional date query parameter
   const dateParam = url.searchParams.get("date");
@@ -47,11 +77,178 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const profile = await profileRes.json();
   const history = await historyRes.json();
 
-  return { profile, history, username, dateParam };
+  return {
+    authenticated: true,
+    profile,
+    history,
+    username,
+    dateParam
+  };
 }
 
 export default function Dashboard() {
-  const { profile: profileData, history: heatmapData, dateParam } = useLoaderData<typeof loader>();
+  const loaderData = useLoaderData<typeof loader>();
+  const { authenticated, username, profile: profileData, history: heatmapData, dateParam, authFailed } = loaderData;
+  const navigate = useNavigate();
+
+  // Password form state (always declared at top level)
+  const [passwordValue, setPasswordValue] = useState('');
+  const [isValidating, setIsValidating] = useState(false);
+  const [showError, setShowError] = useState(false);
+
+  // Try to get password from localStorage on mount and auto-authenticate
+  useEffect(() => {
+    if (!authenticated) {
+      try {
+        const storedPassword = localStorage.getItem(`auth-${username}`);
+        if (storedPassword) {
+          setPasswordValue(storedPassword);
+          // Auto-validate stored password
+          handlePasswordSubmit(storedPassword);
+        }
+      } catch (e) {
+        console.warn('Failed to read password from localStorage:', e);
+      }
+    }
+  }, [authenticated, username]);
+
+  // Show error if auth failed
+  useEffect(() => {
+    if (authFailed) {
+      setShowError(true);
+      // Clear the auth_failed query param
+      const url = new URL(window.location.href);
+      url.searchParams.delete('auth_failed');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, [authFailed]);
+
+  // Handle password validation and storage
+  const handlePasswordSubmit = async (password: string) => {
+    setIsValidating(true);
+    setShowError(false);
+
+    try {
+      // Validate password via API
+      const response = await fetch(`/api/${username}/validate?password=${encodeURIComponent(password)}`);
+      const data = await response.json();
+
+      if (data.valid) {
+        // Store in cookie (30 days)
+        document.cookie = `auth-${username}=${password}; path=/; max-age=2592000; SameSite=Strict`;
+
+        // Store in localStorage as backup
+        try {
+          localStorage.setItem(`auth-${username}`, password);
+        } catch (e) {
+          console.warn('Failed to store password in localStorage:', e);
+        }
+
+        // Reload page to trigger authentication
+        window.location.reload();
+      } else {
+        // Invalid password
+        setShowError(true);
+        setIsValidating(false);
+
+        // Clear stored password if validation fails
+        try {
+          localStorage.removeItem(`auth-${username}`);
+        } catch (e) {
+          console.warn('Failed to clear password from localStorage:', e);
+        }
+      }
+    } catch (error) {
+      console.error('Password validation error:', error);
+      setShowError(true);
+      setIsValidating(false);
+    }
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    handlePasswordSubmit(passwordValue);
+  };
+
+  // If not authenticated, show password form
+  if (!authenticated) {
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
+        <div className="bg-white rounded-2xl shadow-lg p-8 max-w-md w-full">
+          <div className="flex items-center justify-center mb-6">
+            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center">
+              <Lock className="w-8 h-8 text-indigo-600" />
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-800 mb-2 text-center">
+            Protected Dashboard
+          </h2>
+          <p className="text-gray-600 mb-6 text-center">
+            Enter the password to view @{username}'s nutrition dashboard
+          </p>
+
+          {showError && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-800">
+              <XCircle className="w-5 h-5 flex-shrink-0" />
+              <p className="text-sm font-medium">Invalid password. Please try again.</p>
+            </div>
+          )}
+
+          <form onSubmit={handleFormSubmit} className="space-y-4">
+            <div>
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
+                Password
+              </label>
+              <input
+                type="password"
+                id="password"
+                name="password"
+                required
+                value={passwordValue}
+                onChange={(e) => {
+                  setPasswordValue(e.target.value);
+                  setShowError(false); // Clear error when user types
+                }}
+                disabled={isValidating}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-600 focus:border-transparent text-gray-900 placeholder-gray-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                placeholder="Enter password"
+                autoFocus={!passwordValue}
+                autoComplete="off"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isValidating || !passwordValue}
+              className="w-full px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+            >
+              {isValidating ? 'Validating...' : 'Access Dashboard'}
+            </button>
+          </form>
+        </div>
+
+        {/* Attribution Footer */}
+        <div className="mt-8 text-center">
+          <p className="text-sm text-gray-500">
+            Built by{" "}
+            <a
+              href="https://akhy.dev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 hover:text-indigo-700 font-medium underline"
+            >
+              akhy
+            </a>
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Type guard: after authentication check, these should be non-null
+  if (!profileData || !heatmapData) {
+    throw new Error("Profile or history data is missing");
+  }
 
   const [selectedDay, setSelectedDay] = useState<typeof heatmapData[0] | null>(null);
   const todayRef = useRef<HTMLDivElement>(null);
@@ -125,12 +322,50 @@ export default function Dashboard() {
     }
   };
 
-  const mealTypes = [
-    { key: "breakfast" as const, label: "Breakfast", icon: Coffee, color: "amber" },
-    { key: "lunch" as const, label: "Lunch", icon: Sun, color: "orange" },
-    { key: "dinner" as const, label: "Dinner", icon: Moon, color: "indigo" },
-    { key: "snack" as const, label: "Snacks", icon: Cookie, color: "pink" },
-  ];
+  // Default meal type ordering and styling
+  const defaultMealTypes = [
+    { key: "breakfast", label: "Breakfast", icon: Sunrise, color: "amber" },
+    { key: "lunch", label: "Lunch", icon: Sun, color: "orange" },
+    { key: "snack", label: "Snacks", icon: Cookie, color: "pink" },
+    { key: "dinner", label: "Dinner", icon: Moon, color: "indigo" },
+  ] as const;
+
+  // Get all meal types from selected day, sorted by default order
+  const getMealTypes = () => {
+    if (!selectedDay) return [];
+
+    const defaultKeys = defaultMealTypes.map(m => m.key);
+    const allMealKeys = Object.keys(selectedDay.meals) as string[];
+
+    // Sort: default meal types first (in order), then custom meal types
+    const sorted = allMealKeys.sort((a, b) => {
+      const aIndex = defaultKeys.indexOf(a as any);
+      const bIndex = defaultKeys.indexOf(b as any);
+
+      // Both are default types
+      if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+      // Only a is default
+      if (aIndex !== -1) return -1;
+      // Only b is default
+      if (bIndex !== -1) return 1;
+      // Both are custom, sort alphabetically
+      return a.localeCompare(b);
+    });
+
+    // Map to meal type objects
+    return sorted.map(key => {
+      const defaultType = defaultMealTypes.find(m => m.key === key);
+      if (defaultType) return defaultType;
+
+      // Custom meal type - capitalize first letter
+      return {
+        key,
+        label: key.charAt(0).toUpperCase() + key.slice(1),
+        icon: Cookie, // Default icon for custom types
+        color: "gray" as const,
+      };
+    });
+  };
 
   const nutrients = [
     {
@@ -579,7 +814,7 @@ export default function Dashboard() {
             {/* Meals by Type */}
             <h3 className="text-sm md:text-base font-semibold text-gray-700 mb-2 md:mb-3">Meals</h3>
             <div className="space-y-3 md:space-y-4">
-              {mealTypes.map((mealType) => {
+              {getMealTypes().map((mealType) => {
                 const Icon = mealType.icon;
                 const meals = selectedDay.meals[mealType.key];
 
@@ -599,16 +834,16 @@ export default function Dashboard() {
                   <div key={mealType.key} className="space-y-1.5 md:space-y-2">
                     {/* Meal Type Header */}
                     <div
-                      className={`flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 bg-${mealType.color}-50 rounded-lg`}
+                      className={`flex items-center gap-2 md:gap-3 px-2 md:px-3 py-2 md:py-2.5 bg-${mealType.color}-50 rounded-lg`}
                     >
-                      <Icon className={`w-4 h-4 md:w-5 md:h-5 text-${mealType.color}-600`} />
+                      <Icon className={`w-5 h-5 md:w-6 md:h-6 text-${mealType.color}-600 shrink-0`} />
                       <span className="text-sm md:text-base font-semibold text-gray-700">{mealType.label}</span>
                       <span className="ml-auto text-[10px] md:text-sm text-gray-600">
                         <span className="hidden sm:inline">
-                          {mealTotals.calories} cal • {mealTotals.protein}g P • {mealTotals.carbs}g C • {mealTotals.fat}g F
+                          {mealTotals.calories.toFixed(1)} cal • {mealTotals.protein.toFixed(1)}g P • {mealTotals.carbs.toFixed(1)}g C • {mealTotals.fat.toFixed(1)}g F
                         </span>
                         <span className="sm:hidden">
-                          {mealTotals.calories} cal
+                          {mealTotals.calories.toFixed(1)} cal
                         </span>
                       </span>
                     </div>
@@ -619,7 +854,13 @@ export default function Dashboard() {
                         key={idx}
                         className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-2 md:p-3 bg-gray-50 rounded-lg ml-4 md:ml-8 gap-2 sm:gap-0"
                       >
-                        <div className="text-sm md:text-base font-medium text-gray-800">{food.name}</div>
+                        <div className="flex flex-col">
+                          <div className="text-sm md:text-base font-medium text-gray-800">{food.name}</div>
+                          <div className="text-xs text-gray-500 mt-0.5">
+                            {food.brand && <span>{food.brand} • </span>}
+                            <span>{food.quantity} {food.unit}</span>
+                          </div>
+                        </div>
                         <div className="flex gap-3 md:gap-6 text-xs md:text-sm">
                           <div className="text-center">
                             <div className="text-[10px] md:text-xs text-gray-500">Cal</div>
@@ -684,6 +925,21 @@ export default function Dashboard() {
             </p>
           </div>
         )}
+
+        {/* Attribution Footer */}
+        <div className="mt-6 text-center">
+          <p className="text-xs md:text-sm text-gray-500">
+            Built by{" "}
+            <a
+              href="https://akhy.dev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 hover:text-indigo-700 font-medium underline"
+            >
+              akhy
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );
