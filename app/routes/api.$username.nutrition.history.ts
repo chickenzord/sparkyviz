@@ -13,7 +13,8 @@ export async function loader({ params, request }: Route.LoaderArgs) {
   const days = parseInt(url.searchParams.get("days") || "90", 10);
 
   try {
-    const history = await fetchNutritionHistory(username, days);
+    // Don't include meals by default for lighter payload (meals loaded on demand)
+    const history = await fetchNutritionHistory(username, days, false);
     return Response.json(history);
   } catch (error) {
     console.error("Error fetching nutrition history:", error);

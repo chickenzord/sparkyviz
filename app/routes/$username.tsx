@@ -20,6 +20,8 @@ import {
   Sunrise,
   Lock,
   XCircle,
+  User,
+  Cake,
 } from "lucide-react";
 
 export function meta({ params }: Route.MetaArgs) {
@@ -251,6 +253,8 @@ export default function Dashboard() {
   }
 
   const [selectedDay, setSelectedDay] = useState<typeof heatmapData[0] | null>(null);
+  const [loadingMeals, setLoadingMeals] = useState(false);
+  const [mealsCache, setMealsCache] = useState<Map<string, NonNullable<typeof heatmapData[0]['meals']>>>(new Map());
   const todayRef = useRef<HTMLDivElement>(null);
   const scrollContainerRefs = useRef<(HTMLDivElement | null)[]>([]);
 
@@ -282,7 +286,7 @@ export default function Dashboard() {
     const targetIndex = trimmedData.findIndex((d) => d.date === targetDate);
 
     if (targetIndex >= 0) {
-      setSelectedDay(trimmedData[targetIndex]);
+      handleDayClick(trimmedData[targetIndex]);
 
       // Auto-scroll to today if no date param specified
       if (!dateParam && todayRef.current) {
@@ -309,6 +313,45 @@ export default function Dashboard() {
     });
   };
 
+  // Fetch meals for a specific day
+  const fetchMealsForDay = async (day: typeof heatmapData[0]) => {
+    // Check cache first
+    if (mealsCache.has(day.date)) {
+      return mealsCache.get(day.date);
+    }
+
+    setLoadingMeals(true);
+    try {
+      const response = await fetch(`/api/${username}/meals/${day.date}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch meals');
+      }
+      const data = await response.json();
+
+      // Cache the result
+      setMealsCache(prev => new Map(prev).set(day.date, data.meals));
+
+      return data.meals;
+    } catch (error) {
+      console.error('Error fetching meals:', error);
+      return { breakfast: [], lunch: [], dinner: [], snack: [] };
+    } finally {
+      setLoadingMeals(false);
+    }
+  };
+
+  // Handle day selection with meal loading
+  const handleDayClick = async (day: typeof heatmapData[0]) => {
+    setSelectedDay(day);
+
+    // Fetch meals if not already in the day data
+    if (!day.meals) {
+      const meals = await fetchMealsForDay(day);
+      // Update the selected day with fetched meals
+      setSelectedDay({ ...day, meals });
+    }
+  };
+
   const scrollToToday = () => {
     if (todayRef.current) {
       todayRef.current.scrollIntoView({
@@ -317,7 +360,7 @@ export default function Dashboard() {
         inline: "center",
       });
       if (todayIndex >= 0) {
-        setSelectedDay(trimmedData[todayIndex]);
+        handleDayClick(trimmedData[todayIndex]);
       }
     }
   };
@@ -561,7 +604,23 @@ export default function Dashboard() {
                   );
                 })}
               </div>
-              <div className="flex gap-3 md:gap-6 text-xs md:text-sm mt-3 pt-3 border-t justify-center md:justify-start">
+              <div className="flex flex-wrap gap-3 md:gap-6 text-xs md:text-sm mt-3 pt-3 border-t justify-center md:justify-start">
+                {profileData.age !== null && (
+                  <div className="flex items-center gap-1 md:gap-2">
+                    <Cake className="w-4 h-4 md:w-5 md:h-5 text-pink-600" />
+                    <span className="text-gray-600">
+                      <strong>{profileData.age}</strong> years old
+                    </span>
+                  </div>
+                )}
+                {profileData.gender && (
+                  <div className="flex items-center gap-1 md:gap-2">
+                    <User className="w-4 h-4 md:w-5 md:h-5 text-purple-600" />
+                    <span className="text-gray-600 capitalize">
+                      <strong>{profileData.gender}</strong>
+                    </span>
+                  </div>
+                )}
                 <div className="flex items-center gap-1 md:gap-2">
                   <TrendingUp className="w-4 h-4 md:w-5 md:h-5 text-green-600" />
                   <span className="text-gray-600">
@@ -693,7 +752,7 @@ export default function Dashboard() {
                                 ref={
                                   isToday && nutrient.key === "calories" ? todayRef : null
                                 }
-                                onClick={() => setSelectedDay(day)}
+                                onClick={() => handleDayClick(day)}
                                 className={`
                                   relative w-7 h-7 md:w-8 md:h-8 cursor-pointer transition-all active:scale-95
                                   ${isSelected ? "shadow-[inset_0_0_0_2px_rgb(79,70,229)]" : ""}
@@ -813,12 +872,24 @@ export default function Dashboard() {
 
             {/* Meals by Type */}
             <h3 className="text-sm md:text-base font-semibold text-gray-700 mb-2 md:mb-3">Meals</h3>
-            <div className="space-y-3 md:space-y-4">
-              {getMealTypes().map((mealType) => {
-                const Icon = mealType.icon;
-                const meals = selectedDay.meals[mealType.key];
+            {loadingMeals ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mb-3"></div>
+                  <p className="text-sm text-gray-500">Loading meal details...</p>
+                </div>
+              </div>
+            ) : !selectedDay.meals ? (
+              <div className="flex items-center justify-center py-8">
+                <p className="text-sm text-gray-500">No meal data available for this day</p>
+              </div>
+            ) : (
+              <div className="space-y-3 md:space-y-4">
+                {getMealTypes().map((mealType) => {
+                  const Icon = mealType.icon;
+                  const meals = selectedDay.meals?.[mealType.key];
 
-                if (!meals || meals.length === 0) return null;
+                  if (!meals || meals.length === 0) return null;
 
                 const mealTotals = meals.reduce(
                   (acc, food) => ({
@@ -885,8 +956,8 @@ export default function Dashboard() {
                 );
               })}
 
-              {/* Totals */}
-              <div className="flex items-center justify-between p-3 md:p-4 bg-indigo-50 rounded-lg border-2 border-indigo-200 font-semibold">
+                {/* Totals */}
+                <div className="flex items-center justify-between p-3 md:p-4 bg-indigo-50 rounded-lg border-2 border-indigo-200 font-semibold">
                 <div className="text-sm md:text-base text-gray-800">Daily Total</div>
                 <div className="flex gap-3 md:gap-6 text-xs md:text-sm">
                   <div className="text-center">
@@ -912,8 +983,9 @@ export default function Dashboard() {
                     <div className="font-bold text-blue-600">{selectedDay.nutrients.fat}g</div>
                   </div>
                 </div>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

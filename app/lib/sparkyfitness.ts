@@ -154,6 +154,8 @@ interface UpstreamFoodEntry {
 export interface Profile {
   name: string;
   avatar: string;
+  age: number | null;
+  gender: string | null;
   goals: {
     calories: number;
     protein: number;
@@ -183,7 +185,7 @@ export interface DailyData {
     carbs: number;
     fat: number;
   };
-  meals: {
+  meals?: {
     breakfast: FoodItem[];
     lunch: FoodItem[];
     dinner: FoodItem[];
@@ -313,9 +315,23 @@ export async function fetchProfile(username: string): Promise<Profile> {
   const nutritionHistory = await fetchNutritionHistory(username, 90);
   const { currentStreak, totalDays } = calculateStreakAndTotalDays(nutritionHistory);
 
+  // Calculate age from date_of_birth
+  let age: number | null = null;
+  if (data.date_of_birth) {
+    const birthDate = new Date(data.date_of_birth);
+    const today = new Date();
+    age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+  }
+
   return {
     name: data.full_name || username,
     avatar: avatarUrl,
+    age,
+    gender: data.gender || null,
     goals: {
       calories: todayGoals.calories,
       protein: todayGoals.protein,
@@ -334,7 +350,7 @@ export async function fetchProfile(username: string): Promise<Profile> {
  * @param date - Date in YYYY-MM-DD format
  * @returns Object with meals grouped by meal type
  */
-async function fetchFoodEntriesForDate(
+export async function fetchFoodEntriesForDate(
   username: string,
   date: string
 ): Promise<{
@@ -354,6 +370,7 @@ async function fetchFoodEntriesForDate(
       'Content-Type': 'application/json'
     }
   });
+
 
   if (!response.ok) {
     // If no food entries found for this date, return empty meals
@@ -394,6 +411,7 @@ async function fetchFoodEntriesForDate(
       fat: Math.round(entry.fat * ratio * 10) / 10,
     };
 
+    meals[entry.meal_type] ??= [];
     meals[entry.meal_type].push(foodItem);
   });
 
@@ -408,14 +426,15 @@ async function fetchFoodEntriesForDate(
  * 2. Fetch profile to get userId
  * 3. Calculate date range (last N days)
  * 4. Call GET /reports/mini-nutrition-trends for daily totals
- * 5. Fetch food entries for each day (GET /food-entries/by-date/{date})
+ * 5. Optionally fetch food entries for each day (GET /food-entries/by-date/{date})
  * 6. Transform and combine data into DailyData format
  *
- * Note: Food entries are fetched in parallel for all days to optimize performance.
+ * Note: Food entries are fetched in parallel for all days when includeMeals is true.
  */
 export async function fetchNutritionHistory(
   username: string,
-  days: number = 90
+  days: number = 90,
+  includeMeals: boolean = true
 ): Promise<DailyData[]> {
   const apiKey = getApiKey(username);
 
@@ -474,47 +493,52 @@ export async function fetchNutritionHistory(
     nutritionMap.set(day.date, day);
   });
 
-  // Step 5: Fetch food entries for all days in parallel
-  const datePromises: Promise<{ date: string; meals: typeof result[0]['meals'] }>[] = [];
+  // Step 5: Optionally fetch food entries for all days in parallel
   const dateStrings: string[] = [];
-
   for (let i = 0; i < days; i++) {
     const currentDate = new Date(startDate);
     currentDate.setDate(currentDate.getDate() + i);
     const dateStr = currentDate.toISOString().split('T')[0];
     dateStrings.push(dateStr);
-
-    // Fetch food entries for this date
-    datePromises.push(
-      fetchFoodEntriesForDate(username, dateStr)
-        .then(meals => ({ date: dateStr, meals }))
-        .catch(() => ({
-          date: dateStr,
-          meals: { breakfast: [], lunch: [], dinner: [], snack: [] }
-        }))
-    );
   }
 
-  // Wait for all food entry requests to complete
-  const foodEntriesResults = await Promise.all(datePromises);
+  let mealsMap = new Map<string, { breakfast: FoodItem[]; lunch: FoodItem[]; dinner: FoodItem[]; snack: FoodItem[] }>();
 
-  // Create a map of date -> meals for quick lookup
-  const mealsMap = new Map<string, typeof result[0]['meals']>();
-  foodEntriesResults.forEach(({ date, meals }) => {
-    mealsMap.set(date, meals);
-  });
+  if (includeMeals) {
+    const datePromises: Promise<{ date: string; meals: { breakfast: FoodItem[]; lunch: FoodItem[]; dinner: FoodItem[]; snack: FoodItem[] } }>[] = [];
+
+    dateStrings.forEach(dateStr => {
+      // Fetch food entries for this date
+      datePromises.push(
+        fetchFoodEntriesForDate(username, dateStr)
+          .then(meals => ({ date: dateStr, meals }))
+          .catch(() => ({
+            date: dateStr,
+            meals: { breakfast: [], lunch: [], dinner: [], snack: [] }
+          }))
+      );
+    });
+
+    // Wait for all food entry requests to complete
+    const foodEntriesResults = await Promise.all(datePromises);
+
+    // Create a map of date -> meals for quick lookup
+    foodEntriesResults.forEach(({ date, meals }) => {
+      mealsMap.set(date, meals);
+    });
+  }
 
   // Generate array for all requested days
   const result: DailyData[] = [];
   for (let i = 0; i < days; i++) {
     const dateStr = dateStrings[i];
     const dayData = nutritionMap.get(dateStr);
-    const meals = mealsMap.get(dateStr) || {
+    const meals = includeMeals ? (mealsMap.get(dateStr) || {
       breakfast: [],
       lunch: [],
       dinner: [],
       snack: [],
-    };
+    }) : undefined;
 
     result.push({
       date: dateStr,
@@ -529,7 +553,7 @@ export async function fetchNutritionHistory(
         carbs: 0,
         fat: 0,
       },
-      meals,
+      meals: meals as any, // Type assertion to handle optional meals
     });
   }
 

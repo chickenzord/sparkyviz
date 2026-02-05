@@ -5,5 +5,6 @@ export default [
   route(":username", "routes/$username.tsx"),
   route("api/:username/profile", "routes/api.$username.profile.ts"),
   route("api/:username/nutrition/history", "routes/api.$username.nutrition.history.ts"),
+  route("api/:username/meals/:date", "routes/api.$username.meals.$date.ts"),
   route("api/:username/validate", "routes/api.$username.validate.ts"),
 ] satisfies RouteConfig;
